@@ -1,0 +1,102 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Preparar o jogo (three.js local para abrir sem internet)
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+          if curl -fsSL -o www/three.min.js https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js && [ "$(wc -c < www/three.min.js)" -gt 100000 ]; then
+            sed -i 's|https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js|three.min.js|' www/index.html
+          else
+            rm -f www/three.min.js
+            echo "Nao baixou o three.js, o app vai usar a CDN."
+          fi
+
+      - name: Instalar dependencias e criar o projeto Android
+        run: |
+          npm install
+          npx cap add android
+
+      - name: Ajustes do Android (tela cheia, horizontal, tela sempre ligada)
+        run: |
+          set -e
+          sed -i 's|<activity |<activity android:screenOrientation="sensorLandscape" |' android/app/src/main/AndroidManifest.xml
+          F=$(find android/app/src/main/java -name MainActivity.java | head -1)
+          grep -m1 '^package ' "$F" > "$F.new"
+          cat >> "$F.new" <<'JAVA'
+
+          import android.os.Bundle;
+          import android.view.View;
+          import android.view.WindowManager;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  telaCheia();
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) telaCheia();
+              }
+
+              private void telaCheia() {
+                  getWindow().getDecorView().setSystemUiVisibility(
+                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+              }
+          }
+          JAVA
+          mv "$F.new" "$F"
+          npx cap sync android
+
+      - name: Compilar o APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Renomear o APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk ilha-do-vento.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ilha-do-vento-apk
+          path: ilha-do-vento.apk
+
+      - name: Publicar o APK em Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: APK ${{ github.run_number }}
+          files: ilha-do-vento.apk
