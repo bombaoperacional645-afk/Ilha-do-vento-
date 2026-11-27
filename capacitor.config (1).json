@@ -1,0 +1,9 @@
+{
+  "appId": "com.ilhadovento.game",
+  "appName": "Ilha do Vento",
+  "webDir": "www",
+  "backgroundColor": "#000000",
+  "server": {
+    "androidScheme": "https"
+  }
+}
